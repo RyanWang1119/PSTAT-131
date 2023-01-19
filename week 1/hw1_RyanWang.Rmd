@@ -1,0 +1,112 @@
+---
+title: "homework 1"
+author: "Ryan Wang"
+date: "2023-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Q1
+
+Supervised learning:
+For each observation of the predictor measurements $x_i$, there is an corresponding response measurement $y_i$ and each response measurement is the supervisor. 
+
+Unsupervised learning:
+For every observation i, we only have predictor measurements $x_i$ but no corresponding response measurement $y_i$. 
+The difference is that with the supervisor, we can tell how well our model relates the response to the predictors.
+
+## Q2
+
+Regression model is used to predict a quantitative or continuous response. Classification model is used to predict a qualitative or discrete response.
+
+## Q3
+For regression model: mean squared error, mean absolute error, $R^2$. 
+For classification model: accuracy, error rate.
+
+## Q4
+Descriptive models:
+To choose a model that best visually emphasize a trend in data.
+
+Inferential models:
+To understand the association between the response and the predictors, such as knowing which predictors are associated with the response, whether the relationship is positive or negative, or the complexity of the relationship (linear or higher ordered).
+
+Predictive models:
+To obtain a function between X and $\hat{Y}$ and to predict the actual Y value with minimum reducible error.
+
+## Q5
+1. Predictive model.
+The voter's profile can be seen as the predictors and we are interested in deriving a function between the profile and the likelihood of voting for the candidate. Thus, it is the response that matters.
+
+2. Inferential model.
+Whether a voter have personal contact with the candidate is one of the predictors of the likelihood of voting for the candidate. So here we are interested in studying the association between the response and the predictor.
+
+# EDA
+
+## E1
+```{r}
+data(mpg)
+p <- ggplot(mpg, aes(hwy))
+p + geom_histogram()
+```
+The distribution of highway miles per gallon is bimodal and is clustering around 16 and 27. The distribution is also a bit skewed to the right.
+The greatest highway miles per gallon is around 48, the least is around 3.
+
+
+## E2
+```{r,warning=F}
+ggplot(mpg, aes(x=hwy, y=cty)) + 
+  geom_point() +
+  geom_smooth(method = lm)
+```
+It seems that there exists a positive linear relationship between hwy and cty. It means that as hwy increases, cty increases.
+
+## E3
+```{r}
+d <- ggplot(mpg,
+       aes(x=reorder(manufacturer,manufacturer,
+                     function(x)+length(x)))) +
+       geom_bar()
+d + geom_bar() + coord_flip() + labs(x = 'manufacturer')
+```
+Dodge produced the most cars. Lincoln produced the least.
+
+## E4
+```{r}
+levels(factor(mpg$cyl))
+ggplot(mpg, aes(x=factor(cyl),y=hwy)) +
+  geom_boxplot() + labs(x = 'Number of cyl', 'Hwy')
+```
+
+A car with greater number of cylinder tends to have less highway miles per gallon. The difference between the first quantile and third quantile of cars with 5 cylinders is least among the four, perhaps it is because it has the least amount of data. For cars with 4 cylinders and cars with 8 cylinders, it seems that they both have outliers that have higher highway miles per gallon. 
+
+## E5
+
+
+
+
+
+
+
+
+
+```{r}
+library(ggplot2)
+library(ggthemes)
+ggplot(mpg,aes (x=hwy,y=class)) +
+geom_boxplot(position=position_dodge2(0.75, preserve = 'single'))+
+geom_point(mapping=aes(fill=class),color='black', size= 1.5, alpha= 0.2, 
+           position = position_jitterdodge(jitter.width =0.7,dodge.width =0.5,seed=1)) +
+   theme_gdocs() + scale_color_gdocs()+xlab("High way mpg") +ylab("vehicle Class")+
+  theme(legend.position = "none")
+
+
+
+
+ggplot(mpg,aes (x=class,y=hwy,fill=drv)) +
+  geom_boxplot(outlier.size = 2)
+```
+
