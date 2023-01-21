@@ -38,6 +38,21 @@ Predictive models:
 To obtain a function between X and $\hat{Y}$ and to predict the actual Y value with minimum reducible error.
 
 ## Q5
+
+1. 
+Mechanistic models are based on the fundamental laws or theories of natural science. Empirically-driven models are based on observations and have no assumptions on the parameter of the models. The difference is that mechanistic models require less experimental data to construct the model. Also, the parameters in mechanistic models have real physical meaning, which allow us to better interpret the model.
+One similarity is that the real models are often a mix of both. For instance, we can use theories to guide our prediction and use observations to verify the validity of this prediction.
+
+2. 
+I think the mechanistic model is easier to understand because the parameters have actual scientific meanings and the one who understand the science may easily interpret the model.
+
+3.
+Mechanistic model tends to be more complex because it derives functions from the fundamental laws of science. Thus, it might cause over-fitting and have a higher variance. But because it is based on the scientific theories, the prediction might be accurate and less biased.
+Empirically-driven model tends to be more biased because there are noises and random errors in the observations. But it might have less variance because the model is simpler.
+
+
+## Q6
+
 1. Predictive model.
 The voter's profile can be seen as the predictors and we are interested in deriving a function between the profile and the likelihood of voting for the candidate. Thus, it is the response that matters.
 
@@ -84,14 +99,45 @@ ggplot(mpg, aes(x=factor(cyl),y=hwy)) +
 A car with greater number of cylinder tends to have less highway miles per gallon. The difference between the first quantile and third quantile of cars with 5 cylinders is least among the four, perhaps it is because it has the least amount of data. For cars with 4 cylinders and cars with 8 cylinders, it seems that they both have outliers that have higher highway miles per gallon. 
 
 ## E5
+Use corrplot to make a lower triangle correlation matrix of the mpg data set 
 
+```{r}
+library(corrplot) 
+mpg_1 <- mpg %>% select(hwy,year,cyl,cty,displ) 
+cplot <- cor(mpg_1) 
+corrplot(cplot, method = 'number',type = 'lower') 
+```
 
+These are positively correlated:  
+ 
+ hwy and cty - strong correlated
+ For hwy and cty, both have to do with the car's fuel consumption. Naturally a car that has more mile per gallon in city will have more mile per gallon on highway.
+ 
+ year with cyl - weak correlated
+ For year and cyl, it makes sense that newest model tends to have more cylinders than the older ones. But still, many cars remain the same number of cylinders as before, so the positive correlation is not significant.
 
+ year with displ - weak correlated
+ 
+ cyl with displ - strong correlated
+For cyl and displ, more cylinders produce more power and create more engine displacement. 
 
+These are negatively correlated:  
 
+hwy and cyl - strong correlated
+More cylinders means less miles per gallon of gas used. 
 
+hwy and disp - strong correlated
+More engine displacement means less miles per gallon of gas used. 
 
+year and cty - weak correlated
+This is counterintuitive. I was expecting that more recent cars will have more city miles per gallon than the older ones and thus it would be a positive correlation. 
 
+cyl and cty - strong correlated
+More cylinders using gas means less miles being used per gallon. 
+
+cty and displ - strong correlated
+More engine displacement means less city miles per gallon. 
+   
 
 ```{r}
 library(ggplot2)
