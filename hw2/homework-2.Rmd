@@ -1,0 +1,251 @@
+---
+title: "Homework 2"
+author: "Ryan Wang"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: show
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+library(tidyverse)
+library(tidymodels)
+library(here)
+library(yardstick)
+```
+
+## Linear Regression and KNN
+
+For this assignment, we will be working with a data set from the UCI (University of California, Irvine) Machine Learning repository ([see website here](http://archive.ics.uci.edu/ml/datasets/Abalone)). The full data set consists of $4,177$ observations of abalone in Tasmania. (Fun fact: [Tasmania](https://en.wikipedia.org/wiki/Tasmania "Tasmania") supplies about $25\%$ of the yearly world abalone harvest.)
+
+![*Fig 1. Inside of an abalone shell.*](https://cdn.shopify.com/s/files/1/1198/8002/products/1d89434927bffb6fd1786c19c2d921fb_2000x_652a2391-5a0a-4f10-966c-f759dc08635c_1024x1024.jpg?v=1582320404){width="152"}
+
+The age of an abalone is typically determined by cutting the shell open and counting the number of rings with a microscope. The purpose of this data set is to determine whether abalone age (**number of rings + 1.5**) can be accurately predicted using other, easier-to-obtain information about the abalone.
+
+The full abalone data set is located in the `\data` subdirectory. Read it into *R* using `read_csv()`. Take a moment to read through the codebook (`abalone_codebook.txt`) and familiarize yourself with the variable definitions.
+
+Make sure you load the `tidyverse` and `tidymodels`!
+
+### Question 1
+
+Your goal is to predict abalone age, which is calculated as the number of rings plus 1.5. Notice there currently is no `age` variable in the data set. Add `age` to the data set.
+
+Assess and describe the distribution of `age`.
+```{r}
+abalone <- read.csv(here('data', "abalone.csv"))
+abalone <- mutate(abalone, age = rings + 1.5) # add age = ring + 1.5 to the data set.
+
+
+ggplot(data = abalone, aes(age))+geom_histogram(bins=30)
+```
+
+The plot shows that the distribution of age is approximately normal with mean of 12 but it also some what skew to the right. The most of the data locates between age of 4 and 16 and there exist outliers that have age around 30. 
+
+### Question 2
+
+Split the abalone data into a training set and a testing set. Use stratified sampling. You should decide on appropriate percentages for splitting the data.
+
+*Remember that you'll need to set a seed at the beginning of the document to reproduce your results.*
+```{r}
+set.seed(131)
+abalone_split <- initial_split(abalone,prop=0.80,strata = age)
+abalone_train <- training(abalone_split)
+abalone_test <- testing(abalone_split)
+```
+
+### Question 3
+
+Using the **training** data, create a recipe predicting the outcome variable, `age`, with all other predictor variables. Note that you **should not** include `rings` to predict `age`. *Explain why you shouldn't use `rings` to predict `age`.*
+
+Steps for your recipe:
+
+1.  dummy code any categorical predictors
+
+2.  create interactions between
+
+    -   `type` and `shucked_weight`,
+    -   `longest_shell` and `diameter`,
+    -   `shucked_weight` and `shell_weight`
+
+3.  center all predictors, and
+
+4.  scale all predictors.
+
+You'll need to investigate the `tidymodels` documentation to find the appropriate step functions to use.
+```{r}
+abalone_train_no_rings <- abalone_train%>% select(-rings) # exclude rings
+
+abalone_recipe <- recipe(age ~ ., data = abalone_train_no_rings) %>% 
+  step_dummy(all_nominal_predictors()) %>%   # dummy code the categorical predictors
+  step_interact(terms = ~ starts_with("type"):shucked_weight +  # dummy variables 
+                  longest_shell:diameter +   
+                 shucked_weight:shell_weight) %>%  # create interactions
+  
+  step_center(all_predictors()) %>%  # center predictors
+  
+  step_scale(all_predictors())  # scale predictors
+
+
+```
+
+We should not include 'rings' in predicting 'age' because 'age' is a linear transformation of 'rings' whose relationship is determined by ourselves. There will be a perfect correlation between the 'rings' and 'age'. When we decide the best model using AIC and BIC, it is likely that the result is 'age ~ rings' since the value of r-squared will be 1 and the model is simplest. However, it gives no useful information about the relationship between 'ages' and all the other variables.
+
+### Question 4
+
+Create and store a linear regression object using the `"lm"` engine.
+
+```{r}
+lm_model <- linear_reg() %>% 
+  set_engine("lm")
+```
+
+### Question 5
+
+Create and store a KNN object using the `"kknn"` engine. Specify `k = 7`.
+
+```{r}
+library(kknn)
+
+knn_model <- nearest_neighbor(neighbors = 7) %>% 
+  set_engine("kknn") %>% 
+  set_mode("regression")
+```
+
+### Question 6
+
+Now, for each of these models (linear regression and KNN):
+
+1.  set up an empty workflow,
+2.  add the model, and
+3.  add the recipe that you created in Question 3.
+
+Note that you should be setting up two separate workflows.
+
+Fit both models to the training set.
+
+```{r}
+lm_wflow <- workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(abalone_recipe)  # Linear workflow
+
+lm_fit <- fit(lm_wflow, abalone_train_no_rings)
+```
+
+```{r}
+knn_wflow <- workflow() %>% 
+  add_model(knn_model) %>% 
+  add_recipe(abalone_recipe)  # KNN workflow
+
+KNN_fit <- fit(knn_wflow, abalone_train_no_rings)
+```
+
+### Question 7
+
+Use your linear regression `fit()` object to predict the age of a hypothetical female abalone with longest_shell = 0.50, diameter = 0.10, height = 0.30, whole_weight = 4, shucked_weight = 1, viscera_weight = 2, and shell_weight = 1.
+
+```{r}
+lm_pred <- data.frame(type = "F", longest_shell = 0.50, 
+                          diameter = 0.10, height = 0.30, 
+                          whole_weight = 4, shucked_weight = 1, 
+                          viscera_weight = 2, shell_weight = 1)
+predict(lm_fit, new_data = lm_pred)
+
+```
+
+The predicted age is 23.4.
+
+### Question 8
+
+Now you want to assess your models' performance. To do this, use the `yardstick` package:
+
+1.  Create a metric set that includes *R^2^*, RMSE (root mean squared error), and MAE (mean absolute error).
+2.  Use `predict()` and `bind_cols()` to create a tibble of your model's predicted values from the **testing data** along with the actual observed ages (these are needed to assess your model's performance).
+3.  Finally, apply your metric set to the tibble, report the results, and interpret the *R\^2* value.
+
+Repeat these steps once for the linear regression model and for the KNN model.
+```{r}
+# Linear regression
+
+abalone_metrics <- metric_set(rmse, rsq, mae)  # 1. create the metric
+
+# For testing set
+abalone_test_no_rings <- abalone_test %>% select(-rings)  
+abalone_test_res <- predict(lm_fit, new_data = abalone_test_no_rings %>% select(-age))
+abalone_test_res <- bind_cols(abalone_test_res, abalone_test_no_rings %>% select(age))  # 2. create the tibble
+abalone_metrics(abalone_test_res, truth = age, estimate = .pred)  # 3. apply the metric
+
+# For training set
+abalone_train_res <- predict(lm_fit, new_data = abalone_train_no_rings %>% select(-age))
+abalone_train_res <- bind_cols(abalone_train_res, abalone_train_no_rings %>% select(age))
+abalone_metrics(abalone_train_res, truth = age, estimate = .pred)
+```
+
+The RMSE is 2.13 and MAE is 1.55. 
+
+The $R^2$ value is 0.532. It means that 53.2% of the variation in the age is explained by the linear relationship with predictors that are in the model. The $R^2$ is not very high and one possible reason is that the relationship between age and all these predictors is not linear.
+
+
+```{r}
+# KNN
+# For testing set
+abalone_test_res_KNN <- predict(KNN_fit, new_data = abalone_test_no_rings %>% select(-age))
+abalone_test_res_KNN <- bind_cols(abalone_test_res_KNN, abalone_test_no_rings %>% select(age))  
+# 2. create the tibble
+abalone_metrics(abalone_test_res_KNN, truth = age, estimate = .pred)  # 3. apply the metric
+
+# For training set
+abalone_train_res_KNN <- predict(KNN_fit, new_data = abalone_train_no_rings %>% select(-age))
+abalone_train_res_KNN <- bind_cols(abalone_train_res_KNN, abalone_train_no_rings %>% select(age))
+abalone_metrics(abalone_train_res_KNN, truth = age, estimate = .pred)
+```
+
+The RMSE is 2.29 and MAE is 1.64 which are both higher than those of the linear model.
+
+The $R^2$ value is 0.469. It means that 46.9% of the variation in the age is explained by the KNN model with k = 7. The $R^2$ is here is even lower. However, the $R^2$ of the training set is 0.814 which is high. It is likely that we are overfitting the model when using k = 7.
+
+### Question 9
+
+Which model performed better on the testing data? Explain why you think this might be. Are you surprised by any of your results? Why or why not?
+
+The linear model perform better on the testing data because it has higher $R^2$ value, and lower RMSE and MAE value. Even if the linear model is better, it does not necessarily mean that the linear model is suitable because it only explain 53% of the variation in the response.
+
+I am surprised that the difference in values of $R^2$, RMSE, MAE between training and testing set of the linear model is small. I was expecting that the $R^2$ of the testing set would be at least 10% less than $R^2$ of the training set.
+
+
+### Required for 231 Students
+
+In lecture, we presented the general bias-variance tradeoff, which takes the form:
+
+$$
+E[(y_0 - \hat{f}(x_0))^2]=Var(\hat{f}(x_0))+[Bias(\hat{f}(x_0))]^2+Var(\epsilon)
+$$
+
+where the underlying model $Y=f(X)+\epsilon$ satisfies the following:
+
+-   $\epsilon$ is a zero-mean random noise term and $X$ is non-random (all randomness in $Y$ comes from $\epsilon$);
+-   $(x_0, y_0)$ represents a test observation, independent of the training set, drawn from the same model;
+-   $\hat{f}(.)$ is the estimate of $f$ obtained from the training set.
+
+#### Question 10
+
+Which term(s) in the bias-variance tradeoff above represent the reproducible error? Which term(s) represent the irreducible error?
+
+#### Question 11
+
+Using the bias-variance tradeoff above, demonstrate that the expected test error is always at least as large as the irreducible error.
+
+#### Question 12
+
+Prove the bias-variance tradeoff.
+
+Hints:
+
+-   use the definition of $Bias(\hat{f}(x_0))=E[\hat{f}(x_0)]-f(x_0)$;
+-   reorganize terms in the expected test error by adding and subtracting $E[\hat{f}(x_0)]$
+
+![Question 10 11 12](C:\Users\26910\Documents\Git\PSTAT-131\week 2\hw2_q10.jpg)

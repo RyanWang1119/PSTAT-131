@@ -1,0 +1,728 @@
+---
+title: "Predicting Performance of NBA Players"
+author: "Ryan Wang"
+date: "2023-03-16"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+![](C:\Users\26910\Documents\Git\PSTAT-131\final\nba.webp)
+
+# Introduction
+
+### Goal of This Project
+The purpose of this project is to predict the performance of NBA players by evaluating their Value over Replacement Players (VORP) and classifying them as either All-Star players or not.
+
+### What is the Value over Replacement Player and All-Star?
+To understand the idea of Value over Replacement Player, I need to first introduce Box Plus Minus.
+Box Plus Minus is a basketball box score-based metric that estimates a basketball player’s contribution to the team when that player is on the court. It takes into account the player’s box score information (games played, field goal percentage, assists, rebound, etc), position, and the team’s overall performance to estimate the player’s contribution in points above the league average per 100 possessions played.
+The league average is defined as 0.0 and a value of +5.0 means the team is 5 points per 100 possessions better with the player on the floor than with average production from another player.
+
+Value over Replacement Player converts the BPM rate into an estimate of each player's overall contribution to the team, measured versus what a theoretical "replacement player" would provide. 
+A replacement player is one with a performance at "replacement level," the level of performance an average team can expect when trying to replace a player at a minimal cost. That is to say, the player is on the periphery of the league. 
+By design, the player of the replacement level has a VORP of -2.0.
+
+The National Basketball Association (NBA) All-Star Game is an annual exhibition basketball game featuring two teams of twelve composed of all of the top-ranked players from the Eastern and Western Conferences. The All-Star players are the ones being accepted to be the influential players in that season.
+
+### Why VORP?
+Firstly, the calculation of VORP involves both the classic values of the box score and the advanced statistics like offensive and defensive efficiency, effective field goal percentage, turnover rate, etc. Thus, it is a comprehensive way that captures the impact of great defense, selfless offense, and every other hidden contribution that can change the course of a game, which can hardly be done by other statistics.
+
+Secondly, because of the comprehensiveness of these statistics, the calculation process is very complicated. While it is possible to calculate values directly, using a machine learning method to approximate them is more efficient. 
+
+# Loading Packages and Data
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(kknn)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(tidymodels)
+library(here)
+library(ISLR)
+library(ggplot2)
+library(corrplot) 
+library(ggthemes)
+library(yardstick)
+library(MASS)
+library(discrim)
+library(naniar)
+library(forcats)
+library(janitor)
+library(finalfit) 
+library(themis)
+
+set.seed(319)
+nba_15_16<-read.csv(here('data', 'nba_15.csv'))
+```
+
+This data was taken from the Kaggle data set, "NBA Season Statistics 1958 -2017". https://www.kaggle.com/datasets/tanamwololo/nba-season-statistics-1958-2017
+
+I have manually taken a subset with Year 2014 -2016 and added a column indicating whether the player was an All-Star player.
+
+# Data Cleaning
+
+### Excluding the unrepresentative data
+Firstly, there are players that played few games during a season and therefore the reported VORP might not reflect their true performance on court. So, I exclude those players.
+```{r}
+nba_0 <-  subset(nba_15_16, G > 20)  
+```
+
+### Tidying the Position Variable
+Secondly, most of the values of 'Pos' variable in this data are either "C", "PF", "SF", "SG", or "PG". However, some have a mix of the two, like "PG-SG". But as they are a tiny part of the data, I will exclude them.
+```{r}
+nba_0$Pos <- as.factor(nba_0$Pos)
+levels(nba_0$Pos)
+ggplot(nba_0, aes(Pos)) + geom_bar()
+
+nba_1 <-  subset(nba_0, Pos %in% c('C', 'PF', 'SF', 'SG', 'PG'))
+nba_1$Pos <- droplevels(nba_1$Pos)
+levels(nba_1$Pos)
+ggplot(nba_1, aes(Pos)) + geom_bar()
+```
+
+### Transforming the Data
+Thirdly, I divide the sum total of their statistics during one season by the number of games played because the average statistics per game can better reflect one player's performance. This may also remove the effect of confounding variable, the number of games played. For instance, a player who played 80 games with total score of 1600 will not be considered as a better scorer than a player who played 40 games with total score of 1200. 
+
+```{r}
+nba_1$PPG <- nba_1$PTS / nba_1$G
+nba_1$MPG <- nba_1$MP / nba_1$G
+nba_1$RPG <- nba_1$TRB / nba_1$G
+nba_1$APG <- nba_1$AST / nba_1$G
+nba_1$SPG <- nba_1$STL / nba_1$G
+nba_1$BPG <- nba_1$BLK / nba_1$G
+nba_1$TPG <- nba_1$TOV / nba_1$G
+nba_1$FPG <- nba_1$PF / nba_1$G
+```
+
+### Collapsing the Team Variable
+Fourthly, I collapse the team variable into region, indicating which division the team is in.
+```{r}
+nba_basic <- nba_1 %>% dplyr::select(c('Pos', "Age", "Tm", "GS", "MPG", "PPG", "RPG", "APG", "SPG", "BPG", "TPG", "FPG", "FT.", "X3P.", "X2P.", "ALL_STAR", "VORP"))
+
+nba_basic <- nba_basic %>%
+  mutate(region = forcats::fct_collapse(Tm,
+                                        Pacific = c("LAL","GSW","LAC","PHO","SAC"),
+                                        Northwest = c("UTA","MIN","OKC","POR","DEN"),
+                                        Southwest = c("DAL","SAS","HOU","NOP","MEM"),
+                                        Central = c("DET","CLE","MIL","CHI","IND"),
+                                        Southeast = c("MIA","WAS","CHO","ORL","ATL"),
+                                        Atlantic = c("NYK","TOR","BOS","PHI","BRK"))) %>%
+  dplyr::select(-Tm) %>% clean_names()
+
+nba_basic$region <- as.factor(nba_basic$region)
+levels(nba_basic$region)
+ggplot(nba_basic, aes(region)) + geom_bar()
+```
+
+### Filling the Missing Values
+```{r}
+vis_miss(nba_basic)
+
+nba_basic[c("ft")][is.na(nba_basic[c("ft")])] <- 0
+nba_basic[c("x3p")][is.na(nba_basic[c("x3p")])] <- 0
+```
+
+Lastly, there are NAs in the columns "FT." and "X3P.", which are free throw percentage and three points percentage. The NAs are because those players do not have free throw or three points attempt for a whole season. Thus, there is no need to impute and I will set those values to 0.
+
+Now, the data is tidied and we have position, region, age, games started, minutes per game, points per game, rebounds per game, assists per game, steals per game, blocks per game, turnovers per game, fouls per game, free throw percentage, two points percentage, and three points percentage as the predictor. The value over replacement player and whether being selected as an All-Star is the outcome.
+
+
+# Exploratory Data Analysis
+
+### The Outcome, All-Star
+```{r}
+nba_basic$all_star <- as.factor(nba_basic$all_star)
+ggplot(data = nba_basic, aes(all_star))+ geom_bar() + 
+  labs(x = "All Star", y = "Count")
+```
+
+The ratio between the number of All-Star players and the number of non-All Star players is uneven. The Upsampling method should be used.
+
+```{r}
+ggplot(nba_basic, aes(fill=pos, x=all_star)) + 
+    geom_bar(position = 'fill') + labs(x = "All Star", y = "Count")
+```
+
+The proportion of All-Star players between all positions is quite even. 
+
+```{r}
+ggplot(nba_basic, aes(fill=region, x=all_star)) + 
+    geom_bar(position = 'fill') + labs(x = "All Star", y = "Count")
+```
+
+It shows that there were more players selected to be All-Star in the Southeast and the Pacific divisions. TOT represents that the player played for more than one team that season (being traded), and no such player was selected to be All-Star.
+
+### The Outcome, VORP
+```{r}
+ggplot(data = nba_basic, aes(vorp)) + geom_histogram(bins=30)  
+```
+
+The VORP is a little off normal as it is skewed to the right.
+
+```{r}
+ggplot(data = nba_basic, aes(age,vorp)) +
+ geom_point(aes(color = all_star)) + geom_smooth(aes(linetype=all_star),se = F)
+```
+
+The scatter plot shows that the players with higher VORP values typically have age at around 25 - 30, and the All-Star players typically have higher VORP values. 
+
+```{r}
+ggplot(nba_basic,aes (x=pos,y=vorp,fill=all_star)) +
+  geom_boxplot(outlier.size = 2) + labs(x = "Position", y = "VORP")
+
+ggplot(nba_basic,aes (x=region,y=vorp,fill=all_star)) +
+  geom_boxplot(outlier.size = 2) + labs(x = "Region", y = "VORP")
+```
+
+The boxplots show the VORP of players that play different positions/are in different divisions.
+
+### Correlation Plot
+```{r}
+nums_col <- unlist(lapply(nba_basic, is.numeric), use.names = FALSE)  
+nums <- nba_basic[ , nums_col]
+corrplot(cor(nums), method = 'number', type = 'lower') 
+```
+
+One relationship that stands out is the moderately positive correlation between points per game and VORP (0.65), which indicates that a better scorer might have higher VORP value. 
+
+Another apparent relationship is that turnovers per game is strongly positively correlated with assists per game (0.83), which indicates that the more often a player handles and passing the ball, the more likely a turnover occurs.
+
+One thing that surprised me is that the three points percentage has almost no correlation with VORP. Even if three points is one of the most important scoring methods, it seems that good at three points shooting does not make one a better player.
+
+
+# Preparation of fitting the model
+
+### Data splitting
+
+Split the NBA data into a training set and a testing set. The training set contains the data that we fit models to and the testing set contains the data that will be used to assess the model performance. 
+Stratified sampling on the outcome variable is used so that the training set and the testing set preserves the same proportions of instances as observed in the original data.
+```{r}
+set.seed(25)
+nba_split_1 <- initial_split(nba_basic,prop=0.70,strata = vorp)
+nba_train_1 <- training(nba_split_1)
+nba_test_1 <- testing(nba_split_1)
+
+nba_split_2 <- initial_split(nba_basic,prop=0.70,strata = all_star)
+nba_train_2 <- training(nba_split_2)
+nba_test_2 <- testing(nba_split_2)
+```
+
+### Recipe Creation
+
+I will be using the 15 predictors that are discussed at the data cleaning part to create the recipe. 
+
+For the recipe of predicting the VORP value, I firstly dummy code the categorical predictors, and then add interaction terms for some of the variables. Lastly, I normalize the predictors to transform features to be on a similar scale, so that no predictors are inherently more important than the others.
+
+For the recipe of predicting the whether one is an All-Star player, other than the three steps that I do for predicting the VORP value, there is another step which upsample the data. Upsampling is to take random samples from the category with fewer data points such that the number of these random samples meet a certain proportion of the number of the data points from the category with more data points.
+```{r}
+# regression recipe
+nba_recipe_reg <- recipe(vorp ~ pos + age + gs + mpg + ppg +
+                         rpg + apg + spg + bpg + tpg + fpg +
+                         ft + x3p + x2p + region,
+                         data = nba_train_1) %>% 
+  step_dummy(all_nominal_predictors()) %>%   # dummy code the categorical predictor
+  step_interact(terms = ~ starts_with("pos"):rpg +  
+                  starts_with("pos"):bpg + 
+                  starts_with("pos"):apg +
+                 apg:tpg) %>%  # interaction
+    step_normalize(all_numeric_predictors())   # scale predictors
+
+
+# classification recipe
+nba_recipe_class <- recipe(all_star ~ pos + age + gs + mpg + ppg +
+                         rpg + apg + spg + bpg + tpg + fpg +
+                         ft + x3p + x2p + region,
+                         data = nba_train_2) %>% 
+  step_dummy(all_nominal_predictors()) %>%   # dummy code the categorical predictor
+  step_interact(terms = ~ starts_with("pos"):rpg +  
+                  starts_with("pos"):bpg + 
+                  starts_with("pos"):apg + apg:tpg) %>%  # interaction
+  step_upsample(all_star, over_ratio = 0.5) %>%  # upsample
+  step_normalize(all_numeric_predictors())  # scale predictors
+```
+
+### K-Fold Cross Validation
+
+K-fold cross-validation resamples the data so that the data are randomly split into k folds. For each fold, it acts as a 'testing set' while the other k-1 folds combined act as a 'training set'. This process is repeated for k times so that we can take the mean of the MSE or ROC AUC values of all folds to assess the model performance.
+
+The reason why it is helpful is that comparing the model result on the entire training set is likely to cause overfitting. Thus, a good model performance on the training data does not guarantee a good performance on the testing data.
+
+Again, the outcomes, "vorp" and "all_star" are stratified to make sure the data in each fold is not imbalanced.
+
+```{r}
+nba_folds_1 <- vfold_cv(nba_train_1, v = 5, strata = vorp)
+nba_folds_2 <- vfold_cv(nba_train_2, v = 5, strata = all_star)
+```
+
+# Model Fitting
+
+### VORP Value - Regression
+
+1. Set up the model
+
+The candidate models are linear regression, K- nearest neighbors, elastic net, and random forest.
+```{r}
+# Linear regression
+lm_mod_nba <- linear_reg() %>% 
+  set_engine("lm")
+
+# K- nearest neighbors
+knn_mod_nba <- nearest_neighbor(neighbors = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("kknn")
+
+# Elastic net
+en_mod_nba <- linear_reg(mixture = tune(), 
+                              penalty = tune()) %>%
+  set_mode("regression") %>%
+  set_engine("glmnet")
+
+# Random forest
+forest_nba <- rand_forest() %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("regression") %>% 
+  set_args(mtry = tune(),
+           trees = tune(),
+           min_n = tune())
+```
+
+2. Set up the workflow by adding the model and the recipe.
+
+```{r}
+lm_wflow <- workflow() %>% 
+  add_model(lm_mod_nba) %>% 
+  add_recipe(nba_recipe_reg)
+
+knn_wflow <- workflow() %>% 
+  add_model(knn_mod_nba) %>% 
+  add_recipe(nba_recipe_reg)
+
+en_wflow <- workflow() %>% 
+  add_model(en_mod_nba) %>% 
+  add_recipe(nba_recipe_reg)
+
+forest_wflow <- workflow() %>% 
+  add_model(forest_nba) %>% 
+  add_recipe(nba_recipe_reg)
+```
+
+3. Create the tuning grid that specifies the hyperparameters of the model. 
+```{r}
+KNN_grid <- grid_regular(neighbors(range = c(5, 25)), levels = 10)
+
+en_grid <- grid_regular(penalty(range = c(0, 1),
+                                     trans = identity_trans()),
+                        mixture(range = c(0, 1)),
+                             levels = 10)
+
+forest_grid <- grid_regular(mtry(range = c(4, 12)), 
+                        trees(range = c(100, 500)),
+                        min_n(range = c(10, 20)),
+                        levels = 8)
+```
+
+4. Fit the model to the cross-validation sets.
+```{r, eval=FALSE}
+# Linear regression
+nba_lm_cv <- lm_wflow %>% fit_resamples(nba_folds_1)
+
+# K NEAREST NEIGHBORS
+knn_tune <- tune_grid(
+    knn_wflow,
+    resamples = nba_folds_1,
+    grid = KNN_grid)
+
+# ELASTIC NET
+elastic_tune <- tune_grid(
+  en_wflow,
+  resamples = nba_folds_1,
+  grid = en_grid)
+
+# RANDOM FOREST
+rf_tune_res <- tune_grid(
+  forest_wflow,
+  resamples = nba_folds_1,
+  grid = forest_grid)
+
+save(nba_lm_cv, file = "lm_tune_res_vorp.rda")
+save(knn_tune, file = "knn_tune_res_vorp.rda")
+save(elastic_tune, file = "en_tune_res_vorp.rda")
+save(rf_tune_res, file = "rf_tune_res_vorp.rda")
+```
+
+```{r}
+load("lm_tune_res_vorp.rda")
+load("knn_tune_res_vorp.rda")
+load("en_tune_res_vorp.rda")
+load("rf_tune_res_vorp.rda")
+```
+
+#### Model Results
+```{r}
+# Linear regression
+lm_rmse <- collect_metrics(nba_lm_cv)[1,]
+lm_rsq <- collect_metrics(nba_lm_cv)[2,]
+
+# K NEAREST NEIGHBORS
+knn_rmse <- show_best(knn_tune)[1,]
+knn_rsq <- show_best(knn_tune, metric = "rsq")[1,]
+
+# ELASTIC NET
+elastic_rmse <- show_best(elastic_tune)[1,]
+elastic_rsq <- show_best(elastic_tune, metric = "rsq")[1,]
+
+# RANDOM FOREST
+rf_rmse <- show_best(rf_tune_res)[1,]
+rf_rsq <- show_best(rf_tune_res, metric = "rsq")[1,]
+
+# Creating a tibble of all the models and their RMSE
+final_compare_tibble <- tibble(Model = c("Linear Regression", "K Nearest Neighbors", "Elastic Net", "Random Forest"), RMSE = c(lm_rmse$mean, knn_rmse$mean, elastic_rmse$mean, rf_rmse$mean), Rsquare = c(lm_rsq$mean, knn_rsq$mean, elastic_rsq$mean, rf_rsq$mean))
+
+# Arranging by lowest RMSE
+final_compare_tibble <- final_compare_tibble %>% 
+  arrange(RMSE)
+
+final_compare_tibble
+```
+
+#### Plots of Model Results
+```{r}
+autoplot(knn_tune)
+```
+
+For K-nearest neighbors model, I tune the number of neighbors at 10 different levels, from 5 to 25. The plot shows that the root mean squared error of the model is the lowest when there is 17 neighbors and the $R^2$ value does not increase significantly after that point. Thus, the model with $K = 17$ is the best among all the K-nearest neighbors models. 
+
+The best performed K-nearest neighbors model has the root mean squared error of 0.802 and $R^2$ of 0.578. This relatively bad performance might be because the number of predictors is large, and the K-nearest neighbors model cannot perform well in high dimensions.
+
+```{r}
+autoplot(elastic_tune)
+```
+
+For the elastic net model, I tune penalty and mixture at 10 different levels. The plot shows that the root mean squared error is the lowest and the $R^2$ is the highest when the penalty is 0, meaning it is just a linear regression. As the penalty term becomes greater, the model does worse because the coefficients of the predictors are being reduced.
+
+The best performed linear regression model has the root mean squared error of 0.615 and $R^2$ of 0.717.
+
+```{r}
+autoplot(rf_tune_res)
+```
+
+For the random forest model, I tune the number of randomly selected predictors, the minimal node size, and the total number of trees. 
+The plot shows that the root mean squared error decreases as the randomly selected predictors increases but increases as the minimal node size increases. The number of trees seems not to have a big effect as those lines are mixed together.
+
+The best performed random forest model is the one with the number of randomly selected predictors of 12, the minimal node size of 10, and the total number of trees of 100. It has root mean squared error of 0.625 and $R^2$ of 0.735.
+
+Thus, among the all models I fit, the best one is the linear regression model.
+
+### All-Star player - Classification
+
+1. Set up the model 
+
+The candidate models are logistic regression, elastic net, linear discriminate analysis, and random forest.
+```{r}
+# Logistic regression
+log_mod_class <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")  
+
+# Elastic net
+en_mod_class <- logistic_reg(mixture = tune(), 
+                              penalty = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+# LDA
+lda_mod_class <- discrim_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+
+
+# Random forest
+forest_class <- rand_forest() %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification") %>% 
+  set_args(mtry = tune(),
+           trees = tune(),
+           min_n = tune())
+
+```
+
+2. Set up the workflow by adding the model and the recipe.
+```{r}
+log_wflow_class <- workflow() %>% 
+  add_model(log_mod_class) %>% 
+  add_recipe(nba_recipe_class)
+
+en_wflow_class <- workflow() %>% 
+  add_model(en_mod_class) %>% 
+  add_recipe(nba_recipe_class)
+
+lda_wkflow_class <- workflow() %>% 
+  add_model(lda_mod_class) %>% 
+  add_recipe(nba_recipe_class)
+
+forest_wflow_class <- workflow() %>% 
+  add_model(forest_class) %>% 
+  add_recipe(nba_recipe_class)
+```
+
+4. Fit the model to the cross-validation sets. 
+```{r, eval=FALSE}
+# LOGISTIC REGRESSION
+nba_lg_cv <- log_wflow_class %>% fit_resamples(nba_folds_2)
+
+# ELASTIC NET
+elastic_tune_class <- tune_grid(
+  en_wflow_class,
+  resamples = nba_folds_2,
+  grid = en_grid)
+
+# LDA
+nba_lda_cv <- lda_wkflow_class %>% fit_resamples(nba_folds_2)
+
+# RANDOM FOREST
+rf_tune_class <- tune_grid(
+  forest_wflow_class,
+  resamples = nba_folds_2,
+  grid = forest_grid)
+
+save(nba_lg_cv, file = "lg_tune_res_allstar.rda")
+save(elastic_tune_class, file = "en_tune_res_allstar.rda")
+save(nba_lda_cv, file = "lda_tune_res_allstar.rda")
+save(rf_tune_class, file = "rf_tune_res_allstar.rda")
+```
+
+```{r}
+load("lg_tune_res_allstar.rda")
+load("en_tune_res_allstar.rda")
+load("lda_tune_res_allstar.rda")
+load("rf_tune_res_allstar.rda")
+```
+
+#### Model Results
+```{r}
+# LOGISTIC REGRESSION
+lg_auc <- collect_metrics(nba_lg_cv)[2,]
+lg_ac <- collect_metrics(nba_lg_cv)[1,]
+
+# ELASTIC NET
+elastic_auc <- show_best(elastic_tune_class, metric = "roc_auc")[1,]
+elastic_ac <- show_best(elastic_tune_class, metric = "accuracy")[1,]
+
+# LINEAR DISCRIMINATE ANALYSIS
+lda_auc <- collect_metrics(nba_lda_cv)[2,]
+lda_ac <- collect_metrics(nba_lda_cv)[1,]
+
+# RANDOM FOREST
+rf_auc <- show_best(rf_tune_class, metric = "roc_auc")[1,]
+rf_ac <- show_best(rf_tune_class, metric = "accuracy")[1,]
+
+# Creating a tibble of all the models and their RMSE
+final_compare_tibble_class <- tibble(Model = c("Logistic Regression", "Elastic Net", "Linear Discriminate analysis","Random Forest"), ROC_AUC = c(lg_auc$mean, elastic_auc$mean, lda_auc$mean, rf_auc$mean), Accuracy = c(lg_ac$mean, elastic_ac$mean, lda_ac$mean, rf_ac$mean))
+
+# Arranging by lowest ROC AUC
+final_compare_tibble_class <- final_compare_tibble_class %>% 
+  arrange(ROC_AUC)
+
+final_compare_tibble_class
+```
+
+#### Plots of Model Results
+```{r}
+autoplot(elastic_tune_class)
+```
+
+For the elastic net model, I tune penalty and mixture at 10 different levels. The plot shows that the ROC AUC and accuracy are the highest when the penalty is 0, meaning it is just a logistic regression. As the penalty term becomes greater, the model does worse because the coefficients of the predictors are being reduced.
+
+The best performed linear regression model has the ROC AUC of 0.990 and accuracy of 0.966.
+
+```{r}
+autoplot(rf_tune_class)
+```
+
+For the random forest model, I tune the number of randomly selected predictors,the minimal node size, and the total number of trees. There seems no definite trend of ROC AUC as we change these hyperparameters. 
+
+The best performed random forest model is the one with the number of randomly selected predictors of 6, the minimal node size of 17, and the total number of trees of 328. It has the ROC AUC of 0.987 and accuracy of 0.971.
+
+
+For the LDA model, it has the ROC AUC of 0.991 and accuracy of 0.954.
+
+From the results, there seems a trade-off between the ROC AUC and accuracy. Part of the reason could be that the ROC AUC measures the true positive rate and false positive rate of the model while accuracy only measures the true positive rate. Thus, ROC AUC is a more comprehensive indicator of how good a model performs and LDA model will be the best model.
+
+# Results of the Best Model
+
+### VORP Value - Regression
+
+```{r, eval=FALSE}
+# Fitting to the training data
+best_en_train <- select_best(elastic_tune, metric = 'rmse')
+en_final_workflow_train <- finalize_workflow(en_wflow, best_en_train)
+en_final_fit_train <- fit(en_final_workflow_train, data = nba_train_1)
+
+# Save
+save(en_final_fit_train, file = "en_final_fit_train.rda")
+```
+
+```{r}
+load("en_final_fit_train.rda")
+
+# Creating the predicted vs. actual value tibble
+nba_reg_tibble <- predict(en_final_fit_train, new_data = nba_test_1 %>% dplyr::select(-vorp))
+nba_reg_tibble <- bind_cols(nba_reg_tibble, nba_test_1 %>% dplyr::select(vorp))
+```
+
+```{r}
+# Specify the metric
+nba_reg_metric <- metric_set(rmse)
+
+# rmse of the model on the testing data
+nba_reg_res <- nba_reg_metric(nba_reg_tibble, truth = vorp, estimate = .pred)
+nba_reg_res
+```
+
+The elastic net model (linear regression) performs a little bit worse in terms of root mean squared error on the testing set than on the cross-validation set, with rmse = 0.720. 
+
+```{r}
+nba_reg_tibble %>% 
+  ggplot(aes(x = .pred, y = vorp)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(lty = 2) +
+  theme_grey() +
+  coord_obs_pred() +
+  labs(x = "Predicted", y = "Actual",title = "Predicted Values vs. Actual Values")
+```
+
+It is also helpful to see the performance of the model by visualizing the predicted values and the actual values. The plot shows that most of the points fluctuate above and below the diagonal line. Yet, there are big divergences between the predicted values and the actual values for some of the point. For instance, the model predicts a player with actual VORP value of 2 to be 4. In reality, this 2 points difference will differentiate a normal starter player from an All-Star candidate. So, the model can still be improved. 
+
+### All-Star player - Classification
+
+```{r, eval=FALSE}
+# Fitting to the training data
+lda_final_fit_train <- fit(lda_wkflow_class, data = nba_train_2)
+
+# Save
+save(lda_final_fit_train, file = "lda_final_fit_train.rda")
+```
+
+```{r}
+load("lda_final_fit_train.rda")
+
+augment(lda_final_fit_train, new_data = nba_test_2) %>%
+  roc_auc(truth = all_star, estimate = .pred_FALSE)
+```
+
+The LDA model also performs a little bit worse in terms of ROC AUC on the testing set than on the cross-validation set, with ROC AUC = 0.978. But overall, this is a really high ROC AUC score and I can conclude that the LDA model performs well in differentiating the All-Star players and non All-Star players.
+
+```{r}
+augment(lda_final_fit_train, new_data = nba_test_2) %>%
+  roc_curve(truth = all_star, estimate = .pred_FALSE) %>%
+autoplot() + labs(title = 'ROC of LDA model')
+```
+
+The ROC plot shows that the curve resembles a right angle, meaning that the model has a good sensitivity and specificity at the same time.
+
+# Prediction!
+
+### Michael Jordan 
+
+![](C:\Users\26910\Documents\Git\PSTAT-131\final\mj.jpg)
+Let's try to predict the VORP values of Micheal Jordan in 1997-1998 season, in which Micheal Jordan won his second three-peat.
+```{r}
+michael_jordan <- data.frame(
+  pos = "SG",
+  age = 34,
+  gs = 82,
+  mpg = 38.8,
+  ppg = 28.7,
+  rpg = 5.8,
+  apg = 3.5,
+  spg = 1.7,
+  bpg = 0.5,
+  tpg = 2.3,
+  fpg = 1.8,
+  ft = 0.784,
+  x3p = 0.238,
+  x2p = 0.477,
+  region = "Central")
+
+predict(lda_final_fit_train, michael_jordan, type = "class")
+predict(en_final_fit_train, michael_jordan, type = "numeric")
+```
+It shows that Michael Jordan is successfully selected to be an All-Star player by the model but the VORP value is 3.94, which is not very high. It can be due to multiple reasons. Firstly, the data in the training set is from seasons 2015 - 2017, so it might inaccurate to use this model to predict a player that is almost 20 years ago. Secondly, the model itself has variability, remember that the model once predict a player with actual VORP value of 2 to be 4, so it is also likely that the model underestimates Michael Jordan. 
+
+Or perhaps Michael was just not that good... (just kidding)
+
+
+### Lebron James
+![](C:\Users\26910\Documents\Git\PSTAT-131\final\lbj.png)
+Let's also try LeBron James in 2015-2016 season, in which he won his third championship.
+```{r}
+lebron_james <- data.frame(
+  pos = "SF",
+  age = 31,
+  gs = 76,
+  mpg = 35.6,
+  ppg = 25.3,
+  rpg = 7.4,
+  apg = 6.8,
+  spg = 1.4,
+  bpg = 0.6,
+  tpg = 3.3,
+  fpg = 1.9,
+  ft = 0.731,
+  x3p = 0.309,
+  x2p = 0.577,
+  region = "Central")
+
+predict(lda_final_fit_train, lebron_james, type = "class")
+predict(en_final_fit_train, lebron_james, type = "numeric")
+```
+LeBron James is also selected to be an All-Star player and his VORP is 5.81. Both of these outcomes match the great performance of LeBron James in that season.
+
+### A strange Player
+
+```{r}
+a_strange_player <- data.frame(
+  pos = "SF",
+  age = 25,
+  gs = 80,
+  mpg = 30,
+  ppg = 5,
+  rpg = 5,
+  apg = 5,
+  spg = 5,
+  bpg = 5,
+  tpg = 2,
+  fpg = 3.5,
+  ft = 0.5,
+  x3p = 0.2,
+  x2p = 0.3,
+  region = "Central")
+
+predict(lda_final_fit_train, a_strange_player, type = "class")
+predict(en_final_fit_train, a_strange_player, type = "numeric")
+```
+
+Here, I make up a player with very comprehensive performance except scoring. He is selected to be an All-Star player and with surprisingly high VORP value, 6.99. Thus, the model implies that scoring is not that important as long as one can make strong contribution to the game.
+
+# Conclusion
+In this project, I analyze the box score of NBA players in seasons 2015 - 2017 and try to predict their performance by computing the VORP value and classifying them as either All-Star players or not. 
+
+For predicting the VORP value, the best model among all is linear regression. The good performance of the linear regression model does not surprise me, since the outcome variable, VORP is derived from the box scores that I include in the predictor variables (the derivation is very complex, though). 
+The random forest model does not perform as well as I expected and it surely can be improved. For instance, one of the plots shows that the root mean squared error of the random forest models increases monotonously as the minimal node size increases. Thus,
+the model might do better if I decrease the minimal node size. 
+The K-nearest neighbor model does not perform well as expected. Since I have 15 predictors which makes it a 15-dimension vector space, the K-nearest neighbor model can hardly handle this.
+
+For predicting whether a player is an All-Star or not, the linear discriminant analysis model does the best in terms of ROC AUC. All the other models also do pretty well as they have ROC AUC value of over 0.95. This outcome is beyond my expectation since in reality, whether being selected to be an All-Star not only depends on the player's performance but also things like the teams' record and players' popularity. For instance, Kobe Bryant had an average score of 17.6 per game with 35.8% shooting percentage in his last season, but I bet he was the most popular player in that year's All-Star game.
+
+Overall, my biggest takeaways from this project lie in my renewed appreciation for the NBA games that I enjoyed since I was ten as well as the opportunity of building experience and skills with machine learning techniques.
+
+![](C:\Users\26910\Documents\Git\PSTAT-131\final\mj2.png)

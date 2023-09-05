@@ -1,0 +1,21 @@
+The project has 15 predictors and 2 outcomes.
+
+Predictors:
+pos: the position that the player plays (point guard, shooting guard, small forward, power forward, center),
+reg: the region/division where the player plays (Pacific, Northwest, Southwest, Central, Southeast, Atlantic), 
+age: age, 
+gs: games started, 
+mpg: minutes per game, 
+ppg: points per game, 
+rpg: rebounds per game, 
+apg: assists per game, 
+spg: steals per game, 
+bpg: blocks per game, 
+tpg: turnovers per game, 
+fpg: fouls per game, 
+ft: free throw percentage, 
+x2p: two points percentage, 
+x3p: three points percentage.
+
+Outcomes:  
+The value over replacement player and whether being selected as an All-Star.
